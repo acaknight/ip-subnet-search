@@ -77,7 +77,7 @@ python -m pip install -r requirements.txt
 Create a `.env` file in the project root:
 
 ```dotenv
-DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/subnet_lookup
+DATABASE_URL=postgresql+asyncpg://username:password@localhost:5432/db_name
 ```
 
 Replace the username, password, host, port, and database name with your own values. Do not commit credentials to source control.
@@ -85,7 +85,7 @@ Replace the username, password, host, port, and database name with your own valu
 Alembic currently reads its connection URL from `alembic.ini`, independently of `DATABASE_URL`. Set `sqlalchemy.url` in `alembic.ini` to the same async PostgreSQL URL before running migrations:
 
 ```ini
-sqlalchemy.url = postgresql+asyncpg://postgres:password@localhost:5432/subnet_lookup
+sqlalchemy.url = postgresql+asyncpg://username:password@localhost:5432/db_name
 ```
 
 ### 4. Apply migrations
