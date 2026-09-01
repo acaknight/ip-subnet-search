@@ -1,53 +1,123 @@
 # Subnet IP Lookup API
 
-An async REST API built with **FastAPI** and **SQLAlchemy 2.0** for logging user IP addresses and querying them by exact match, partial match, or CIDR subnet containment — using PostgreSQL's native `inet` type for correct, index-friendly network lookups.
+An asynchronous REST API for recording user IP addresses and searching them by log ID, IP/CIDR containment, or partial host text.
 
-## Overview
-
-Storing and querying IP addresses as plain strings is a common but flawed pattern — it breaks down the moment you need subnet-aware queries (e.g. "find all logs from `192.168.1.0/24`"). This project uses PostgreSQL's native `INET`/`CIDR` types and the `<<=` containment operator to perform correct, efficient subnet matching directly at the database level, instead of relying on brittle string `LIKE` matching or filtering in application code.
+The service is built with FastAPI, SQLAlchemy 2.0, asyncpg, and PostgreSQL's native `INET` type. CIDR lookups use PostgreSQL's network containment operator instead of trying to interpret IP ranges in application code.
 
 ## Features
 
-- **Create user IP logs** — validated against strict IPv4/IPv6 formats via Pydantic before hitting the database.
-- **Fetch log by ID** — simple primary-key lookup.
-- **Subnet-aware IP search** — query using a CIDR block (e.g. `192.168.1.0/24`) and get back every log whose IP falls within that subnet, using Postgres's `<<=` containment operator rather than text matching.
-- **Graceful error handling** — invalid IP/CIDR input returns a clean `400`/`422` instead of a raw database traceback; duplicate IPs return `409`.
+- Create user-to-IP log entries.
+- Fetch an individual log by its ID.
+- Find addresses contained by an IPv4 or IPv6 network.
+- Search the textual host portion of an address.
+- Use an asynchronous database session throughout the request path.
+- Manage the database schema with Alembic.
+- Seed the database with batches of unique random IPv4 addresses.
 
-## Tech Stack
+## Tech stack
 
 | Layer | Technology |
-|---|---|
-| API framework | FastAPI |
+| --- | --- |
+| API | FastAPI |
 | ORM | SQLAlchemy 2.0 (async) |
-| DB driver | asyncpg |
-| Database | PostgreSQL (`inet` column type) |
-| Validation | Pydantic v2 (`IPvAnyAddress` / `IPvAnyNetwork`) |
-| Server | Uvicorn |
+| Validation | Pydantic v2 |
+| Database | PostgreSQL |
+| Database driver | asyncpg |
+| Migrations | Alembic |
+| ASGI server | Uvicorn |
 
-## API Endpoints
+## Project structure
 
-### `GET /user_logs/{log_id}`
-Fetch a single log entry by its integer ID.
-
-- **200** — returns the matching log
-- **404** — no log with that ID
-
-### `GET /users_ip/{partial_ip:path}`
-Search logs by IP or CIDR subnet. Accepts a slash (e.g. `10.0.0.0/8`), so the route uses the `:path` converter.
-
-- **200** — returns all logs whose `ip_address` is contained within (or equal to) the given subnet
-- **404** — no matches found
-- Uses Postgres's `<<=` operator against the `inet` column for correct network-range matching (not string search).
-
-**Example**
+```text
+.
+├── app
+│   ├── db
+│   │   ├── alembic
+│   │   │   └── versions
+│   │   ├── database.py       # Async engine, session factory, and dependency
+│   │   └── seed_db.py        # Batch data seeder
+│   ├── models
+│   │   ├── module.py         # SQLAlchemy model
+│   │   └── schemas.py        # Request schema
+│   └── main.py               # FastAPI application and routes
+├── alembic.ini
+├── requirements.txt
+└── README.md
 ```
-GET /users_ip/192.168.1.0/24
+
+## Prerequisites
+
+- Python 3.11 or later
+- PostgreSQL 12 or later
+- A PostgreSQL database and user with permission to create tables, indexes, and functions
+
+## Getting started
+
+### 1. Create and activate a virtual environment
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
 ```
 
-### `POST /create_user`
-Create a new IP log entry.
+On Windows PowerShell:
 
-**Request body**
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+### 2. Install dependencies
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+### 3. Configure the database
+
+Create a `.env` file in the project root:
+
+```dotenv
+DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/subnet_lookup
+```
+
+Replace the username, password, host, port, and database name with your own values. Do not commit credentials to source control.
+
+Alembic currently reads its connection URL from `alembic.ini`, independently of `DATABASE_URL`. Set `sqlalchemy.url` in `alembic.ini` to the same async PostgreSQL URL before running migrations:
+
+```ini
+sqlalchemy.url = postgresql+asyncpg://postgres:password@localhost:5432/subnet_lookup
+```
+
+### 4. Apply migrations
+
+```bash
+alembic upgrade head
+```
+
+The initial migration creates the `user_logs` table, an index on `ip_address`, and the `safe_inet_cast(text)` PostgreSQL function used by the search endpoint.
+
+### 5. Run the API
+
+```bash
+uvicorn app.main:app --reload
+```
+
+The API is available at `http://127.0.0.1:8000`.
+
+- Swagger UI: `http://127.0.0.1:8000/docs`
+- ReDoc: `http://127.0.0.1:8000/redoc`
+
+## API reference
+
+### Create a user log
+
+```http
+POST /create_user_log
+Content-Type: application/json
+```
+
+Request body:
+
 ```json
 {
   "user_id": 129,
@@ -55,57 +125,136 @@ Create a new IP log entry.
 }
 ```
 
-- **200/201** — entry created
-- **409** — IP address already exists (unique constraint)
-- **422** — malformed IP/CIDR (rejected by Pydantic validation before reaching the DB)
-
-## Getting Started
-
-### Prerequisites
-- Python 3.11+ (see note below on 3.14 + `greenlet` compatibility)
-- PostgreSQL 12+
-
-### Setup
+Example request:
 
 ```bash
-git clone https://github.com/<your-username>/subnet-ip-lookup-api.git
-cd subnet-ip-lookup-api
-
-python -m venv .venv
-source .venv/bin/activate    # Windows: .venv\Scripts\activate
-
-pip install -r requirements.txt
+curl -X POST http://127.0.0.1:8000/create_user_log \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":129,"ip_address":"120.234.231.10"}'
 ```
 
-### Environment variables
+Example response:
 
-Create a `.env` file:
-
+```json
+{
+  "message": "Entry created successfully",
+  "data": {
+    "id": 1,
+    "user_id": 129,
+    "ip_address": "120.234.231.10"
+  }
+}
 ```
-DATABASE_URL=postgresql+asyncpg://<user>:<password>@localhost:5432/<db_name>
+
+### Fetch a log by ID
+
+```http
+GET /user_logs/{log_id}
 ```
 
-### Run the server
+Example:
 
 ```bash
-uvicorn main:app --reload
+curl http://127.0.0.1:8000/user_logs/1
 ```
 
-API docs available at `http://127.0.0.1:8000/docs`.
+The endpoint returns `404 Not Found` when the ID does not exist.
 
-## Design Notes
+### Search by IP, CIDR, or partial host text
 
-- IP addresses are stored using Postgres's native `INET` column type rather than plain text, enabling correct network-aware querying and allowing a GiST index (`inet_ops`) for performant subnet lookups at scale.
-- Subnet input is validated with Pydantic (`IPvAnyAddress`/`IPvAnyNetwork`) at the API boundary, so malformed input (e.g. an invalid prefix length) is rejected early with a clear `422`, rather than surfacing as a raw database error.
-- The lookup endpoint uses the `:path` converter to correctly accept CIDR notation containing a `/` in the URL.
+```http
+GET /users_ip/{partial_ip}
+```
 
-## Known Environment Notes
+The route uses FastAPI's `path` converter, so CIDR values containing `/` can be passed directly in the URL.
 
-- If running on very recent Python versions (e.g. 3.14), ensure `greenlet` has a compatible wheel installed — SQLAlchemy's async engine depends on it to bridge sync drivers into async execution.
+Find every address within a subnet:
 
-## Possible Future Improvements
+```bash
+curl http://127.0.0.1:8000/users_ip/192.168.1.0/24
+```
 
-- Add pagination to `/users_ip/{partial_ip}` for large result sets.
-- Add IPv6 test coverage.
-- Add Alembic migrations for schema versioning.
-- Add automated tests (pytest + httpx) covering valid/invalid IP and subnet inputs.
+Find an exact address:
+
+```bash
+curl http://127.0.0.1:8000/users_ip/192.168.1.42
+```
+
+Search the host text:
+
+```bash
+curl http://127.0.0.1:8000/users_ip/168.1
+```
+
+Internally, the query matches rows when either:
+
+1. `ip_address <<= safe_inet_cast(input)` is true; or
+2. `host(ip_address) ILIKE '%input%'` is true.
+
+`safe_inet_cast` converts malformed network input to `NULL`, preventing the containment branch from raising a PostgreSQL cast error. The text-search branch can still match the supplied input. The endpoint returns `404 Not Found` when neither branch finds a row.
+
+## Database schema
+
+The initial migration creates the following logical schema:
+
+```sql
+CREATE TABLE user_logs (
+    id         INTEGER PRIMARY KEY,
+    user_id    INTEGER NOT NULL,
+    ip_address INET NOT NULL
+);
+```
+
+Using `INET` allows PostgreSQL to understand address and network semantics. In particular, the `<<=` operator checks whether the stored address is contained by or equal to the supplied address/network.
+
+## Seed sample data
+
+The seeder generates 50,000 unique random IPv4 addresses by default and inserts them in batches of 5,000:
+
+```bash
+python -m app.db.seed_db
+```
+
+Adjust `TOTAL_RECORDS` and `BATCH_SIZE` in `app/db/seed_db.py` if a different data volume is required.
+
+## Alembic commands
+
+Create a migration after changing a model:
+
+```bash
+alembic revision --autogenerate -m "describe the change"
+```
+
+Apply all migrations:
+
+```bash
+alembic upgrade head
+```
+
+Roll back the most recent migration:
+
+```bash
+alembic downgrade -1
+```
+
+## Current implementation notes
+
+- `UserLogCreate.ip_address` is currently typed as `str`; Pydantic therefore does not validate IP syntax before the insert. PostgreSQL rejects invalid `INET` values.
+- The model declares `ip_address` as nullable, while the initial migration declares it non-nullable. Keep the ORM model and migration schema aligned before generating future migrations.
+- The create endpoint catches `IntegrityError` and reports a duplicate-IP conflict, but the current model and migration do not define a unique constraint on `ip_address`. Duplicate addresses are therefore allowed unless the database has an additional constraint outside this migration.
+- The generated index on `ip_address` is a regular PostgreSQL index. If subnet containment becomes a high-volume query, inspect the query plan and consider a GiST or SP-GiST operator-class index appropriate for the workload.
+- Search responses are not paginated, so broad networks may return large result sets.
+- The repository does not currently include an automated test suite.
+
+## Suggested next steps
+
+- Change the request field to `IPvAnyAddress` and add a response schema.
+- Add a unique constraint if one IP address must map to only one log entry.
+- Add pagination and deterministic ordering to search results.
+- Add pytest coverage for IPv4, IPv6, CIDR, malformed input, duplicates, and empty results.
+- Read `DATABASE_URL` in Alembic's `env.py` so application and migration configuration share one source of truth.
+- Disable SQLAlchemy's `echo=True` outside local development.
+
+## License
+
+No license has been specified for this project.
