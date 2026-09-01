@@ -1,10 +1,10 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import INET
-from sqlalchemy import select, cast, String
-from database import get_db
-from module import UserLog
-from schemas import UserLogCreate
+from sqlalchemy import select, cast, String, or_, func
+from app.db.database import get_db
+from app.models.module import UserLog
+from app.models.schemas import UserLogCreate
 from sqlalchemy.exc import IntegrityError
 
 import random
@@ -30,8 +30,14 @@ async def get_user_log(log_id: int, db: AsyncSession = Depends(get_db)):
 @app.get("/users_ip/{partial_ip:path}")
 async def get_user_ip(partial_ip: str, db: AsyncSession = Depends(get_db)):
     #  return (partial_ip)
+
     result = await db.execute(
-        select(UserLog).where(UserLog.ip_address.op("<<=")(cast(partial_ip, INET)))
+        select(UserLog).where(
+            or_(
+                UserLog.ip_address.op("<<=")(func.safe_inet_cast(partial_ip)),
+                func.host(UserLog.ip_address).ilike(f"%{partial_ip}%"),
+            )
+        )
     )
     logs = result.scalars().all()
     if not logs:
@@ -40,7 +46,7 @@ async def get_user_ip(partial_ip: str, db: AsyncSession = Depends(get_db)):
 
 
 # fetches all the data in the db
-@app.post("/create_user")
+@app.post("/create_user_log")
 async def create_user_log(payload: UserLogCreate, db: AsyncSession = Depends(get_db)):
     new_entry = UserLog(
         user_id=payload.user_id,

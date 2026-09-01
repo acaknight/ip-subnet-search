@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer
 from sqlalchemy.dialects.postgresql import INET
-from database import Base
+from app.db.database import Base
 
 
 class UserLog(Base):
@@ -8,4 +8,4 @@ class UserLog(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, nullable=False)
-    ip_address = Column(INET, nullable=False, index=True)
+    ip_address = Column(INET, nullable=True, index=True)
