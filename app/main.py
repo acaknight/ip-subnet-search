@@ -6,7 +6,7 @@ from app.db.database import get_db
 from app.models.module import UserLog
 from app.models.schemas import UserLogCreate
 from sqlalchemy.exc import IntegrityError
-
+import ipaddress
 import random
 from ipaddress import IPv4Address
 
@@ -27,6 +27,7 @@ async def get_user_log(log_id: int, db: AsyncSession = Depends(get_db)):
     return log
 
 
+# methord 1
 @app.get("/users_ip/{partial_ip:path}")
 async def get_user_ip(partial_ip: str, db: AsyncSession = Depends(get_db)):
     #  return (partial_ip)
@@ -42,6 +43,29 @@ async def get_user_ip(partial_ip: str, db: AsyncSession = Depends(get_db)):
     logs = result.scalars().all()
     if not logs:
         raise HTTPException(status_code=404, detail="No matching IP addresses found")
+    return logs
+
+
+# methord 2
+@app.get("/v2/users_ip/{partial_ip:path}")
+async def get_user_ip_v2(partial_ip: str, db: AsyncSession = Depends(get_db)):
+
+    if is_subnet(partial_ip):
+        result = await db.execute(
+            select(UserLog).where(
+                UserLog.ip_address.op("<<=")(func.safe_inet_cast(partial_ip))
+            )
+        )
+    else:
+        result = await db.execute(
+            select(UserLog).where(
+                func.host(UserLog.ip_address).ilike(f"%{partial_ip}%")
+            )
+        )
+
+    logs = result.scalars().all()
+    if not logs:
+        raise HTTPException(status_code=404, detail="No 2 matching IP addresses found")
     return logs
 
 
@@ -69,6 +93,19 @@ async def create_user_log(payload: UserLogCreate, db: AsyncSession = Depends(get
             "ip_address": new_entry.ip_address,
         },
     }
+
+
+def is_subnet(ip_str: str) -> bool:
+    try:
+        # Check if it has a slash (e.g., "192.168.1.0/24")
+        if "/" in ip_str:
+            # strict=False allows treating "192.168.1.5/24" as a valid subnet
+            ipaddress.ip_network(ip_str, strict=False)
+            return True
+        return False
+    except ValueError:
+        # Not a valid IP or subnet format at all
+        return False
 
 
 # @app.post("/seed/user_logs")
